@@ -1771,14 +1771,14 @@ class NotificationService:
     
     def _send_telegram_message(self, api_url: str, chat_id: str, text: str) -> bool:
         """发送单条 Telegram 消息"""
-        # 转换 Markdown 为 Telegram 支持的格式
-        # Telegram 的 Markdown 格式稍有不同，做简单处理
-        telegram_text = self._convert_to_telegram_markdown(text)
-        
+        # 转换 Markdown 为 Telegram HTML 格式
+        # HTML 格式更稳定，支持更多格式特性
+        telegram_text = self._convert_to_telegram_html(text)
+
         payload = {
             "chat_id": chat_id,
             "text": telegram_text,
-            "parse_mode": "Markdown",
+            "parse_mode": "HTML",
             "disable_web_page_preview": True
         }
         
@@ -1849,28 +1849,57 @@ class NotificationService:
         
         return all_success
     
-    def _convert_to_telegram_markdown(self, text: str) -> str:
+    def _convert_to_telegram_html(self, text: str) -> str:
         """
-        将标准 Markdown 转换为 Telegram 支持的格式
-        
-        Telegram Markdown 限制：
-        - 不支持 # 标题
-        - 使用 *bold* 而非 **bold**
-        - 使用 _italic_ 
+        将标准 Markdown 转换为 Telegram HTML 格式
+
+        Telegram HTML 支持的标签：
+        - <b>粗体</b> 或 <strong>粗体</strong>
+        - <i>斜体</i> 或 <em>斜体</em>
+        - <code>代码</code>
+        - <pre>代码块</pre>
+        - <a href="url">链接</a>
         """
         result = text
-        
-        # 移除 # 标题标记（Telegram 不支持）
-        result = re.sub(r'^#{1,6}\s+', '', result, flags=re.MULTILINE)
-        
-        # 转换 **bold** 为 *bold*
-        result = re.sub(r'\*\*(.+?)\*\*', r'*\1*', result)
-        
-        # 转义特殊字符（Telegram Markdown 需要）
-        # 注意：不转义已经用于格式的 * _ `
-        for char in ['[', ']', '(', ')']:
-            result = result.replace(char, f'\\{char}')
-        
+
+        # 转换标题为粗体（# 标题 -> <b>标题</b>）
+        result = re.sub(r'^#{1,6}\s+(.+)$', r'<b>\1</b>', result, flags=re.MULTILINE)
+
+        # 转换粗体：**文本** 或 __文本__ -> <b>文本</b>
+        result = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', result)
+        result = re.sub(r'__(.+?)__', r'<b>\1</b>', result)
+
+        # 转换斜体：*文本* -> <i>文本</i>（避免与粗体冲突）
+        # 使用负向前瞻和负向后顾确保不匹配 **
+        result = re.sub(r'(?<!\*)\*(?!\*)([^*]+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', result)
+
+        # 转换行内代码：`代码` -> <code>代码</code>
+        result = re.sub(r'`([^`]+?)`', r'<code>\1</code>', result)
+
+        # 转换代码块：```代码``` -> <pre>代码</pre>
+        result = re.sub(r'```(.+?)```', r'<pre>\1</pre>', result, flags=re.DOTALL)
+
+        # 转换链接：[文本](url) -> <a href="url">文本</a>
+        result = re.sub(r'\[([^\]]+?)\]\(([^\)]+?)\)', r'<a href="\2">\1</a>', result)
+
+        # 移除表格语法（Telegram 不支持表格），保留内容
+        # 移除表格分隔行 |---|---|
+        result = re.sub(r'^\|[\s\-:]+\|$\n?', '', result, flags=re.MULTILINE)
+        # 转换表格行为普通文本（移除首尾的 |）
+        result = re.sub(r'^\|\s*(.+?)\s*\|$', r'\1', result, flags=re.MULTILINE)
+        # 将表格单元格分隔符 | 替换为 -
+        result = re.sub(r'(?<=\S)\s*\|\s*(?=\S)', ' - ', result)
+
+        # 转换引用块：> 文本 -> <i>💬 文本</i>
+        result = re.sub(r'^>\s+(.+)$', r'<i>💬 \1</i>', result, flags=re.MULTILINE)
+
+        # 转义 HTML 特殊字符（但保留我们创建的标签）
+        # 这个步骤很复杂，简化处理：只转义 & 符号
+        result = result.replace('&', '&amp;')
+
+        # 清理多余的空行（超过2个连续换行）
+        result = re.sub(r'\n{3,}', '\n\n', result)
+
         return result
     
     def send_to_pushover(self, content: str, title: Optional[str] = None) -> bool:
