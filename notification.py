@@ -1862,6 +1862,8 @@ class NotificationService:
         """
         result = text
 
+        # ===== 第一步：先进行 Markdown 到 HTML 的转换 =====
+
         # 转换标题为粗体（# 标题 -> <b>标题</b>）
         result = re.sub(r'^#{1,6}\s+(.+)$', r'<b>\1</b>', result, flags=re.MULTILINE)
 
@@ -1870,7 +1872,6 @@ class NotificationService:
         result = re.sub(r'__(.+?)__', r'<b>\1</b>', result)
 
         # 转换斜体：*文本* -> <i>文本</i>（避免与粗体冲突）
-        # 使用负向前瞻和负向后顾确保不匹配 **
         result = re.sub(r'(?<!\*)\*(?!\*)([^*]+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', result)
 
         # 转换行内代码：`代码` -> <code>代码</code>
@@ -1893,9 +1894,30 @@ class NotificationService:
         # 转换引用块：> 文本 -> <i>💬 文本</i>
         result = re.sub(r'^>\s+(.+)$', r'<i>💬 \1</i>', result, flags=re.MULTILINE)
 
-        # 转义 HTML 特殊字符（但保留我们创建的标签）
-        # 这个步骤很复杂，简化处理：只转义 & 符号
+        # ===== 第二步：转义 HTML 特殊字符（但保留我们创建的标签）=====
+        # 关键修复：需要转义文本中的 < 和 >，但不能破坏 HTML 标签
+
+        # 策略：使用占位符保护 HTML 标签，然后转义，最后恢复
+        import uuid
+        placeholders = {}
+
+        # 保护所有 HTML 标签
+        def protect_tag(match):
+            placeholder = f"___PLACEHOLDER_{uuid.uuid4().hex[:8]}___"
+            placeholders[placeholder] = match.group(0)
+            return placeholder
+
+        # 保护所有合法的 HTML 标签
+        result = re.sub(r'<(/?(b|i|code|pre|a|strong|em)[^>]*)>', protect_tag, result)
+
+        # 现在转义所有剩余的 < 和 >
         result = result.replace('&', '&amp;')
+        result = result.replace('<', '&lt;')
+        result = result.replace('>', '&gt;')
+
+        # 恢复被保护的 HTML 标签
+        for placeholder, original in placeholders.items():
+            result = result.replace(placeholder, original)
 
         # 清理多余的空行（超过2个连续换行）
         result = re.sub(r'\n{3,}', '\n\n', result)
