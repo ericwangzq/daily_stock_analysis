@@ -385,9 +385,9 @@ class GeminiAnalyzer:
     def __init__(self, api_key: Optional[str] = None):
         """
         初始化 AI 分析器
-        
-        优先级：Gemini > OpenAI 兼容 API
-        
+
+        优先级：OpenAI 兼容 API > Gemini
+
         Args:
             api_key: Gemini API Key（可选，默认从配置读取）
         """
@@ -398,22 +398,38 @@ class GeminiAnalyzer:
         self._using_fallback = False  # 是否正在使用备选模型
         self._use_openai = False  # 是否使用 OpenAI 兼容 API
         self._openai_client = None  # OpenAI 客户端
-        
+
+        # 检查 OpenAI API Key 是否有效（过滤占位符）
+        config = get_config()
+        openai_key_valid = (
+            config.openai_api_key and
+            not config.openai_api_key.startswith('your_') and
+            len(config.openai_api_key) > 10
+        )
+
         # 检查 Gemini API Key 是否有效（过滤占位符）
         gemini_key_valid = self._api_key and not self._api_key.startswith('your_') and len(self._api_key) > 10
-        
-        # 优先尝试初始化 Gemini
+
+        # 优先尝试初始化 OpenAI 兼容 API（如 OpenRouter）
+        if openai_key_valid:
+            try:
+                self._init_openai_fallback()
+                if self._openai_client:
+                    logger.info("优先使用 OpenAI 兼容 API (OpenRouter/DeepSeek 等)")
+                    return
+            except Exception as e:
+                logger.warning(f"OpenAI 兼容 API 初始化失败: {e}，尝试 Gemini 备选")
+
+        # OpenAI 失败或未配置，尝试 Gemini 作为备选
         if gemini_key_valid:
             try:
                 self._init_model()
+                if self._model:
+                    logger.info("OpenAI 不可用，使用 Gemini 备选")
+                    return
             except Exception as e:
-                logger.warning(f"Gemini 初始化失败: {e}，尝试 OpenAI 兼容 API")
-                self._init_openai_fallback()
-        else:
-            # Gemini Key 未配置，尝试 OpenAI
-            logger.info("Gemini API Key 未配置，尝试使用 OpenAI 兼容 API")
-            self._init_openai_fallback()
-        
+                logger.warning(f"Gemini 初始化失败: {e}")
+
         # 两者都未配置
         if not self._model and not self._openai_client:
             logger.warning("未配置任何 AI API Key，AI 分析功能将不可用")
